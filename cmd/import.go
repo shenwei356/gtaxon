@@ -70,11 +70,11 @@ Supported file types includes:
 		case "gi_taxid_nucl":
 			log.Info("Import from file: %s", dataFile)
 
-			taxon.LoadGiTaxid(dataFile, dbFilePath, "gi_taxid_nucl", batchSize, force)
+			taxon.LoadGiTaxid(dbFilePath, "gi_taxid_nucl", dataFile, batchSize, force)
 		case "gi_taxid_prot":
 			log.Info("Import from file: %s", dataFile)
 
-			taxon.LoadGiTaxid(dataFile, dbFilePath, "gi_taxid_prot", batchSize, force)
+			taxon.LoadGiTaxid(dbFilePath, "gi_taxid_prot", dataFile, batchSize, force)
 		default:
 			log.Errorf("Unsupported filetype: %s", fileType)
 			os.Exit(-1)
@@ -87,5 +87,5 @@ func init() {
 
 	importCmd.Flags().StringP("type", "t", "", "data type. see above description")
 	importCmd.Flags().BoolP("force", "f", false, "delete exited subdatabase")
-	importCmd.Flags().IntP("batch-size", "b", 1000000, "batch size of records when writting database")
+	importCmd.Flags().IntP("batch-size", "b", 100000, "batch size of records when writting database (do not change this)")
 }

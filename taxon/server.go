@@ -27,28 +27,34 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/boltdb/bolt"
 	"github.com/gin-gonic/gin"
 	"github.com/parnurzeal/gorequest"
 )
 
-var db *bolt.DB
-
 // StartServer runs a web server for query
-func StartServer(dataFilePath string, port int) {
-	var err error
-	db, err = bolt.Open(dataFilePath, 0600, nil)
-	checkError(err)
-	defer db.Close()
+func StartServer(dbFilePath string, port int, timeout int, threads int) {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	pool = NewDBPool(dbFilePath, threads)
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 
 	router.GET("/gi2taxid", gi2taxid)
 
-	router.Run(fmt.Sprintf(":%d", port))
+	// router.Run(fmt.Sprintf(":%d", port))
+	s := &http.Server{
+		Addr:           fmt.Sprintf(":%d", port),
+		Handler:        router,
+		ReadTimeout:    2 * time.Second,
+		WriteTimeout:   2 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
+	s.ListenAndServe()
 }
 
 // ErrDBNotFound is a error
@@ -84,6 +90,9 @@ func gi2taxid(c *gin.Context) {
 		c.JSON(http.StatusOK, msg)
 		return
 	}
+
+	db := pool.GetDB()
+	defer pool.ReleaseDB(db)
 
 	taxids := make([]string, len(gis))
 	n := 0 // counter of seccessful query
@@ -121,7 +130,7 @@ func gi2taxid(c *gin.Context) {
 }
 
 // RemoteQueryGi2Taxid query from remote server
-func RemoteQueryGi2Taxid(host string, port int, dbType string, gis []string) []string {
+func RemoteQueryGi2Taxid(host string, port int, dbType string, gis []string) ([]string, []string) {
 	host = strings.TrimSpace(host)
 	var url string
 	if regexp.MustCompile("^http://").MatchString(host) {
@@ -146,5 +155,5 @@ func RemoteQueryGi2Taxid(host string, port int, dbType string, gis []string) []s
 	err := json.Unmarshal([]byte(body), &result)
 	checkError(err)
 
-	return result.Taxids
+	return result.Gis, result.Taxids
 }

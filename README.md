@@ -4,7 +4,7 @@
 
 gTaxon - a fast cross-platform NCBI taxonomy data querying tool,
 with cmd client ans REST API server for both local and remote server.
-http:///github.com/shenwei356/gtaxon
+[http:///github.com/shenwei356/gtaxon](http:///github.com/shenwei356/gtaxon)
 
 ## Supporting querying types
 
@@ -21,24 +21,26 @@ http:///github.com/shenwei356/gtaxon
 
 ## Performance
 
+[Detail](https://github.com/shenwei356/gtaxon/blob/master/testdata/PERFORMANCE.md)
+
 Note: 1) bolt database utilizes the operating system's page cache,
 so repeat queries are faster than the first query. 2) "remote query" actually is from local host.
 
-| dataset        | local query (s) | remote query (s) |
-|----------------|-----------------|------------------|
-| small (0.25K)  |  0.015          |   0.007          |
-| medium (25K)   |  0.018          |   0.007          |
-| large (2.5M)   |  0.016          |   0.012          |
-
-
+| dataset        | local query     | remote query     | remote query (repeated) |
+|----------------|-----------------|------------------|-------------------------|
+| small (0.25K)  |  0.013 s        |   0.013 s        |  0.009s                 |
+| medium (25K)   |  0.38 s         |   0.57 s         |  0.178s                 |
+| large (2.5M)   |  17 s           |   1min 38s       |  20 s                   |
 
 ## Download && Install
 
-1. Just download the executable binary files of your operating system from  [Release](https://github.com/shenwei356/gtaxon/releases) page.
+Steps:
+
+1. Just download and uncompress the executable binary files of your operating system from  [Release](https://github.com/shenwei356/gtaxon/releases) page.
 
 2. Rename it to `gtaxon.exe` (for Windows) or `gtaxon` (for other operating systems) for convenience, and then run it in command-line interface, no compilation, no dependencies.
 
-You can also add the directory of the executable file to environment variable `PATH`, so you can run gtaxon anywhere.
+You can also add the directory of the executable file to environment variable `PATH`, so you can run `gtaxon` anywhere.
 
 1. For windows, the simplest way is copy it to ` C:\WINDOWS\system32`.
 
@@ -57,16 +59,16 @@ You can also add the directory of the executable file to environment variable `P
 
 2. Importing data
 
-        # ~ 20 min for me
+        # ~ 16 min for me
         gtaxon db import -f -t gi_taxid_prot gi_taxid_prot.dmp.gz
 
 ### Querying from local
 
-1. few queries
+- few queries
 
         gtaxon cli local -t gi_taxid_prot 139299181 139299182
 
-2. from file
+- from file
 
         gtaxon cli local -t gi_taxid_prot -f gi_list_file
 
@@ -78,7 +80,14 @@ You can also add the directory of the executable file to environment variable `P
 
 2. Querying
 
-        gtaxon cli remote -H 192.168.1.101 -P 8080 -t gi_taxid_prot -f gi_list_file
+    - few queries
+
+            gtaxon cli remote -t gi_taxid_prot 139299181 139299182
+
+    - from files
+
+            gtaxon cli remote -H 192.168.1.101 -P 8080 -t gi_taxid_prot -f gi_list_file
+
 
 ## Errors checking
 
@@ -91,7 +100,7 @@ You can also add the directory of the executable file to environment variable `P
 Default config file is: `$HOME/.gtaxon.yaml`
 
 This is useful when querying from remote server,
-we could type few words by writing flags like host and port to config file
+we could type few words by saving flags like host and port to config file
 
 ## REST APIs
 
@@ -99,15 +108,18 @@ Example:
 
 `http://127.0.0.1:8080/gi2taxid?db=gi_taxid_prot&gi=139299191111&gi=139299181&gi=139299175`
 
+Therefore, you can write client in your favorite programming language.
+
 ## Implement details
 
-see doc: [godoc](https://godoc.org/github.com/shenwei356/gtaxon)
+API reference: [godoc](https://godoc.org/github.com/shenwei356/gtaxon/taxon)
 
-- Programming language: [golang/Go](https://golang.org)
+- Programming language: [Go](https://golang.org)
 - Database: [bolt](https://github.com/boltdb/bolt), an embedded key/value database for Go
 - Web server: [gin](https://github.com/gin-gonic/gin), a fast HTTP web framework written in Go
 
 ## Caveats
 
-- database file size is 16G after loading gi_taxid_prot.dmp.gz
-- 64bit operating system is better
+- Database file size is 16G after loading gi_taxid_prot.dmp.gz
+- 64bit operating system is better.
+- `bolt` database utilizes the operating system's page cache, larger virtual memory is better.

@@ -55,7 +55,7 @@ var homeDir string
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	RootCmd.PersistentFlags().StringP("db-path", "", defaultDbPath, "database path")
+	RootCmd.PersistentFlags().StringP("db-dir", "", defaultDbPath, "database directory")
 	RootCmd.PersistentFlags().StringP("db-file", "", defaultDbFile, "database file name")
 
 	var err error

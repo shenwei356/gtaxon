@@ -21,6 +21,8 @@
 package cmd
 
 import (
+	"runtime"
+
 	"github.com/spf13/cobra"
 
 	"github.com/shenwei356/gtaxon/taxon"
@@ -29,15 +31,20 @@ import (
 // serverCmd represents the server command
 var serverCmd = &cobra.Command{
 	Use:   "server",
-	Short: "run a web server",
-	Long:  `adfadf`,
+	Short: "start a web server",
+	Long: `start a web server with REST APIs,
+and you can use "gtaxon cli remote" to query from the server `,
 	Run: func(cmd *cobra.Command, args []string) {
 		dbFilePath, _, _ := getDbFilePath(cmd)
 
 		port, err := cmd.Flags().GetInt("port")
 		checkError(err)
+		timeout, err := cmd.Flags().GetInt("timeout")
+		checkError(err)
+		threads, err := cmd.Flags().GetInt("threads")
+		checkError(err)
 
-		taxon.StartServer(dbFilePath, port)
+		taxon.StartServer(dbFilePath, port, timeout, threads)
 	},
 }
 
@@ -45,4 +52,6 @@ func init() {
 	RootCmd.AddCommand(serverCmd)
 
 	serverCmd.Flags().IntP("port", "P", 8080, "port number")
+	serverCmd.Flags().IntP("timeout", "", 2, "request and responce time out (second)")
+	serverCmd.Flags().IntP("threads", "j", runtime.NumCPU(), "max number of database connection")
 }

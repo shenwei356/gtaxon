@@ -23,7 +23,9 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/shenwei356/gtaxon/taxon"
 	fileutil "github.com/shenwei356/util/file"
@@ -36,6 +38,8 @@ var remoteCmd = &cobra.Command{
 	Short: "query from remote server",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
+		runtime.GOMAXPROCS(runtime.NumCPU())
+
 		dataType, err := cmd.Flags().GetString("type")
 		checkError(err)
 		host, err := cmd.Flags().GetString("host")
@@ -45,6 +49,8 @@ var remoteCmd = &cobra.Command{
 		dataFile, err := cmd.Flags().GetString("file")
 		checkError(err)
 		batchSize, err := cmd.Flags().GetInt("batch-size")
+		checkError(err)
+		threads, err := cmd.Flags().GetInt("threads")
 		checkError(err)
 
 		if dataFile == "" {
@@ -68,7 +74,7 @@ var remoteCmd = &cobra.Command{
 			if dataFile == "" {
 				remoteQueryGi2Taxid(host, port, "gi_taxid_prot", args)
 			} else {
-				remoteQueryGi2TaxidByFile(host, port, "gi_taxid_prot", dataFile, batchSize)
+				remoteQueryGi2TaxidByFile(host, port, "gi_taxid_prot", dataFile, batchSize, threads)
 			}
 
 		case "gi_taxid_prot":
@@ -77,7 +83,7 @@ var remoteCmd = &cobra.Command{
 			if dataFile == "" {
 				remoteQueryGi2Taxid(host, port, "gi_taxid_prot", args)
 			} else {
-				remoteQueryGi2TaxidByFile(host, port, "gi_taxid_prot", dataFile, batchSize)
+				remoteQueryGi2TaxidByFile(host, port, "gi_taxid_prot", dataFile, batchSize, threads)
 			}
 
 		default:
@@ -88,13 +94,13 @@ var remoteCmd = &cobra.Command{
 }
 
 func remoteQueryGi2Taxid(host string, port int, dataType string, gis []string) {
-	taxids := taxon.RemoteQueryGi2Taxid(host, port, dataType, gis)
+	gis, taxids := taxon.RemoteQueryGi2Taxid(host, port, dataType, gis)
 	for i, gi := range gis {
 		fmt.Printf("%s\t%s\n", gi, taxids[i])
 	}
 }
 
-func remoteQueryGi2TaxidByFile(host string, port int, dataType string, dataFile string, batchSize int) {
+func remoteQueryGi2TaxidByFile(host string, port int, dataType string, dataFile string, batchSize int, threads int) {
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
@@ -105,11 +111,44 @@ func remoteQueryGi2TaxidByFile(host string, port int, dataType string, dataFile 
 		}
 		return line, true
 	}
-	ch, err := fileutil.ReadFileWithBuffer(dataFile, batchSize, 4, fn)
+	chRead, err := fileutil.ReadFileWithBuffer(dataFile, batchSize, runtime.NumCPU(), fn)
 	checkError(err)
-	for gis := range ch {
-		remoteQueryGi2Taxid(host, port, dataType, gis)
+
+	chResults := make(chan [][]string, threads)
+
+	// receive result and print
+	chDone := make(chan int)
+	go func() {
+		for s := range chResults {
+			gis, taxids := s[0], s[1]
+			for i, gi := range gis {
+				fmt.Printf("%s\t%s\n", gi, taxids[i])
+			}
+		}
+		chDone <- 1
+	}()
+
+	// querying
+	var wg sync.WaitGroup
+	tokens := make(chan int, threads)
+	for gis := range chRead {
+		tokens <- 1
+		wg.Add(1)
+
+		go func(gis []string) {
+			defer func() {
+				wg.Done()
+				<-tokens
+			}()
+
+			gis, taxids := taxon.RemoteQueryGi2Taxid(host, port, dataType, gis)
+			checkError(err)
+			chResults <- [][]string{gis, taxids}
+		}(gis)
 	}
+	wg.Wait()
+	close(chResults)
+	<-chDone
 }
 
 func init() {
@@ -119,5 +158,5 @@ func init() {
 	remoteCmd.Flags().IntP("port", "P", 8080, "port number")
 	remoteCmd.Flags().StringP("type", "t", "", "data type. Valid: gi_taxid_prot or gi_taxid_nucl")
 	remoteCmd.Flags().StringP("file", "f", "", "read queries from file")
-	remoteCmd.Flags().IntP("batch-size", "b", 1000, "batch size of querying")
+	remoteCmd.Flags().IntP("batch-size", "b", 10000, "batch size of querying (should not be too small or too large, do not change this)")
 }

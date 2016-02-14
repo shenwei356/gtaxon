@@ -35,7 +35,7 @@ func checkError(err error) {
 }
 
 func getDbFilePath(cmd *cobra.Command) (string, string, string) {
-	dbPath, err := cmd.Flags().GetString("db-path")
+	dbPath, err := cmd.Flags().GetString("db-dir")
 	checkError(err)
 	dbFile, err := cmd.Flags().GetString("db-file")
 	checkError(err)

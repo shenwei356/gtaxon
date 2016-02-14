@@ -23,6 +23,7 @@ package taxon
 import (
 	"os"
 
+	"github.com/boltdb/bolt"
 	"github.com/mitchellh/go-homedir"
 	pathutil "github.com/shenwei356/util/path"
 )
@@ -71,5 +72,46 @@ func InitDatabase(dbPath string, dbFile string, force bool) {
 		}
 	} else {
 		os.MkdirAll(DbPath, os.ModePerm)
+	}
+}
+
+var pool *DBPool
+
+// DBPool is bolt db connection pool
+type DBPool struct {
+	dbs []*bolt.DB
+	ch  chan *bolt.DB
+}
+
+// NewDBPool is constructor for DBPools
+func NewDBPool(dbFilePath string, n int) *DBPool {
+	pool := new(DBPool)
+	pool.dbs = make([]*bolt.DB, n)
+	pool.ch = make(chan *bolt.DB, n)
+
+	for i := 0; i < n; i++ {
+		db, err := bolt.Open(dbFilePath, 0600, &bolt.Options{ReadOnly: true})
+		checkError(err)
+		pool.dbs[i] = db
+		pool.ch <- db
+	}
+
+	return pool
+}
+
+// GetDB gets one connection
+func (p *DBPool) GetDB() *bolt.DB {
+	return <-p.ch
+}
+
+// ReleaseDB releases a connection
+func (p *DBPool) ReleaseDB(db *bolt.DB) {
+	p.ch <- db
+}
+
+// Close closes all connection
+func (p *DBPool) Close() {
+	for _, db := range p.dbs {
+		db.Close()
 	}
 }

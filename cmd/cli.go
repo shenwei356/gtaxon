@@ -20,7 +20,11 @@
 
 package cmd
 
-import "github.com/spf13/cobra"
+import (
+	"runtime"
+
+	"github.com/spf13/cobra"
+)
 
 // cliCmd represents the cli command
 var cliCmd = &cobra.Command{
@@ -36,4 +40,6 @@ var cliCmd = &cobra.Command{
 
 func init() {
 	RootCmd.AddCommand(cliCmd)
+
+	cliCmd.PersistentFlags().IntP("threads", "j", runtime.NumCPU(), "max number connections")
 }

@@ -23,8 +23,11 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
 
+	"github.com/boltdb/bolt"
 	"github.com/shenwei356/gtaxon/taxon"
 	fileutil "github.com/shenwei356/util/file"
 	"github.com/spf13/cobra"
@@ -36,11 +39,15 @@ var localCmd = &cobra.Command{
 	Short: "query from local database",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
+		runtime.GOMAXPROCS(runtime.NumCPU())
+
 		dbType, err := cmd.Flags().GetString("type")
 		checkError(err)
 		dataFile, err := cmd.Flags().GetString("file")
 		checkError(err)
 		batchSize, err := cmd.Flags().GetInt("batch-size")
+		checkError(err)
+		threads, err := cmd.Flags().GetInt("threads")
 		checkError(err)
 
 		if dataFile == "" {
@@ -66,7 +73,7 @@ var localCmd = &cobra.Command{
 			if dataFile == "" {
 				queryGi2Taxid(dbFilePath, "gi_taxid_nucl", args)
 			} else {
-				queryGi2TaxidByFile(dbFilePath, "gi_taxid_nucl", dataFile, batchSize)
+				queryGi2TaxidByFile(dbFilePath, "gi_taxid_nucl", dataFile, batchSize, threads)
 			}
 
 		case "gi_taxid_prot":
@@ -75,7 +82,7 @@ var localCmd = &cobra.Command{
 			if dataFile == "" {
 				queryGi2Taxid(dbFilePath, "gi_taxid_prot", args)
 			} else {
-				queryGi2TaxidByFile(dbFilePath, "gi_taxid_prot", dataFile, batchSize)
+				queryGi2TaxidByFile(dbFilePath, "gi_taxid_prot", dataFile, batchSize, threads)
 			}
 
 		default:
@@ -86,14 +93,18 @@ var localCmd = &cobra.Command{
 }
 
 func queryGi2Taxid(dbFilePath string, dataType string, gis []string) {
-	taxids, err := taxon.QueryGi2Taxid(dbFilePath, dataType, gis)
+	db, err := bolt.Open(dbFilePath, 0600, nil)
 	checkError(err)
+
+	taxids, err := taxon.QueryGi2Taxid(db, dataType, gis)
+	checkError(err)
+
 	for i, gi := range gis {
 		fmt.Printf("%s\t%s\n", gi, taxids[i])
 	}
 }
 
-func queryGi2TaxidByFile(dbFilePath string, dataType string, dataFile string, batchSize int) {
+func queryGi2TaxidByFile(dbFilePath string, dataType string, dataFile string, batchSize int, threads int) {
 	if batchSize <= 0 {
 		batchSize = 10000
 	}
@@ -104,11 +115,47 @@ func queryGi2TaxidByFile(dbFilePath string, dataType string, dataFile string, ba
 		}
 		return line, true
 	}
-	ch, err := fileutil.ReadFileWithBuffer(dataFile, batchSize, 4, fn)
+	chRead, err := fileutil.ReadFileWithBuffer(dataFile, batchSize, runtime.NumCPU(), fn)
 	checkError(err)
-	for gis := range ch {
-		queryGi2Taxid(dbFilePath, dataType, gis)
+
+	pool := taxon.NewDBPool(dbFilePath, threads)
+	chResults := make(chan [][]string, threads)
+
+	// receive result and print
+	chDone := make(chan int)
+	go func() {
+		for s := range chResults {
+			gis, taxids := s[0], s[1]
+			for i, gi := range gis {
+				fmt.Printf("%s\t%s\n", gi, taxids[i])
+			}
+		}
+		chDone <- 1
+	}()
+
+	// querying
+	var wg sync.WaitGroup
+	tokens := make(chan int, threads)
+	for gis := range chRead {
+		tokens <- 1
+		wg.Add(1)
+
+		go func(gis []string) {
+			db := pool.GetDB()
+			defer func() {
+				pool.ReleaseDB(db)
+				wg.Done()
+				<-tokens
+			}()
+
+			taxids, err := taxon.QueryGi2Taxid(db, dataType, gis)
+			checkError(err)
+			chResults <- [][]string{gis, taxids}
+		}(gis)
 	}
+	wg.Wait()
+	close(chResults)
+	<-chDone
 }
 
 func init() {
@@ -116,5 +163,5 @@ func init() {
 
 	localCmd.Flags().StringP("type", "t", "", "data type")
 	localCmd.Flags().StringP("file", "f", "", "read queries from file")
-	localCmd.Flags().IntP("batch-size", "b", 10000, "batch size of querying")
+	localCmd.Flags().IntP("batch-size", "b", 100000, "batch size of querying")
 }
