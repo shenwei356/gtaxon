@@ -15,7 +15,7 @@ with cmd client ans REST API server for both local and remote server.
 - Easy to install. **Only ONE single executable binary file**.
  No scared source compilation, installing extra packages,
  configuring environment variables
-- **Cross platform**. gTaxon is implemented in [golang](https://golang.org). Executable binary files for most popular operating system (Linux, OS X, Windows, \*BSD ) are available. See [Release](https://github.com/shenwei356/gtaxon/releases) page.
+- **Cross platform**. gTaxon is implemented in [golang](https://golang.org). Executable binary files for most popular operating system (Linux, Mac OS X, Windows, \*BSD ) are available. See [Release](https://github.com/shenwei356/gtaxon/releases) page.
 - Supporting querying from **both LOCAL and REMOTE server** by REST API, which is also easily called by various clients.
 - **Fast**. See Section Performance.
 
@@ -24,7 +24,8 @@ with cmd client ans REST API server for both local and remote server.
 [Detail](https://github.com/shenwei356/gtaxon/blob/master/testdata/PERFORMANCE.md)
 
 Note: 1) bolt database utilizes the operating system's page cache,
-so repeat queries are faster than the first query. 2) "remote query" actually is from local host.
+so repeat queries are faster than the first query. 2) "remote query" actually is from local host
+with minimum network latency
 
 | dataset        | local query     | remote query     | remote query (repeated) |
 |----------------|-----------------|------------------|-------------------------|

@@ -30,7 +30,8 @@
 - Result:
 
     Note: 1) bolt database utilizes the operating system's page cache,
-    so repeat queries are faster than the first query. 2) "remote query" actually is from local host.
+    so repeat queries are faster than the first query. 2) "remote query" actually is from local host 
+    with minimum network latency
 
 | dataset        | local query     | remote query     | remote query (repeated) |
 |----------------|-----------------|------------------|-------------------------|

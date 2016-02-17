@@ -22,11 +22,12 @@ package taxon
 
 import (
 	"fmt"
+	"reflect"
 	"runtime"
 	"strings"
 
 	"github.com/boltdb/bolt"
-	fileutil "github.com/shenwei356/util/file"
+	"github.com/shenwei356/breader"
 )
 
 // LoadGiTaxid reads gi_taxid_nucl or gi_taxid_prot file and writes the data to database
@@ -45,25 +46,42 @@ func LoadGiTaxid(dbFile string, bucket string, dataFile string, batchSize int, f
 		batchSize = 1000000
 	}
 
-	fn := func(line string) (string, bool) {
-		if line == "" {
-			return "", false
+	fn := func(line string) (interface{}, bool, error) {
+		line = strings.TrimRight(line, "\n")
+		if line == "" || line[0] == '#' {
+			return nil, false, nil
 		}
-		return line, true
+		items := strings.Split(line, "\t")
+		if len(items) != 2 {
+			return nil, false, nil
+		}
+		if items[0] == "" || items[1] == "" {
+			return nil, false, nil
+		}
+		return items, true, nil
 	}
-	chRead, err := fileutil.ReadFileWithBuffer(dataFile, batchSize, runtime.NumCPU(), fn)
+
+	reader, err := breader.NewBufferedReader(dataFile, runtime.NumCPU(), batchSize, fn)
 	checkError(err)
 
 	n := 0
-	for batch := range chRead {
-		var records [][]string
+	for chunk := range reader.Ch {
+		if chunk.Err != nil {
+			checkError(chunk.Err)
+			return
+		}
 
-		for _, line := range batch {
-			items := strings.Split(line, "\t")
-			if len(items) != 2 {
-				continue
+		var records [][]string
+		for _, data := range chunk.Data {
+			switch reflect.TypeOf(data).Kind() {
+			case reflect.Slice:
+				s := reflect.ValueOf(data)
+				items := make([]string, s.Len())
+				for i := 0; i < s.Len(); i++ {
+					items[i] = s.Index(i).String()
+				}
+				records = append(records, items)
 			}
-			records = append(records, items)
 		}
 		write2db(records, db, bucket)
 		n += len(records)
