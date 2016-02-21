@@ -21,6 +21,7 @@
 package taxon
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/boltdb/bolt"
@@ -114,4 +115,47 @@ func (p *DBPool) Close() {
 	for _, db := range p.dbs {
 		db.Close()
 	}
+}
+
+func deleteBucket(db *bolt.DB, bucket string) error {
+	// create the bucket if it not exists
+	err := db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists([]byte(bucket))
+		if err != nil {
+			return fmt.Errorf("failed to create bucket: %s", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		err := tx.DeleteBucket([]byte(bucket))
+		if err != nil {
+			return fmt.Errorf("failed to delete bucket: %s", err)
+		}
+		return nil
+	})
+	return err
+}
+
+func write2db(kvs [][]string, db *bolt.DB, bucket string) error {
+	err := db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists([]byte(bucket))
+		if err != nil {
+			return fmt.Errorf("failed to create bucket: %s", err)
+		}
+		for _, items := range kvs {
+			if len(items) == 0 {
+				break
+			}
+			err = b.Put([]byte(items[0]), []byte(items[1]))
+			if err != nil {
+				return fmt.Errorf("failed to put record: %s:%s", items[0], items[1])
+			}
+		}
+		return nil
+	})
+	return err
 }

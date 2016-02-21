@@ -22,16 +22,17 @@ package taxon
 
 import (
 	"fmt"
-	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 
 	"github.com/boltdb/bolt"
 	"github.com/shenwei356/breader"
+	"github.com/shenwei356/gtaxon/taxon/nodes"
 )
 
-// ImportGiTaxid reads gi_taxid_nucl or gi_taxid_prot file and writes the data to database
-func ImportGiTaxid(dbFile string, bucket string, dataFile string, chunkSize int, force bool) {
+// ImportNodes reads
+func ImportNodes(dbFile string, bucket string, dataFile string, batchSize int, force bool) {
 	db, err := bolt.Open(dbFile, 0600, nil)
 	checkError(err)
 	defer db.Close()
@@ -42,26 +43,25 @@ func ImportGiTaxid(dbFile string, bucket string, dataFile string, chunkSize int,
 		log.Info("Old database deleted: %s", bucket)
 	}
 
-	if chunkSize <= 0 {
-		chunkSize = 1000000
+	if batchSize <= 0 {
+		batchSize = 10000
 	}
 
+	re := regexp.MustCompile(`\t\|$`)
 	fn := func(line string) (interface{}, bool, error) {
 		line = strings.TrimRight(line, "\n")
-		if line == "" || line[0] == '#' {
+		if line == "" {
 			return nil, false, nil
 		}
-		items := strings.Split(line, "\t")
-		if len(items) != 2 {
+
+		items := strings.Split(re.ReplaceAllString(line, ""), "\t|\t")
+		if len(items) != 13 {
 			return nil, false, nil
 		}
-		if items[0] == "" || items[1] == "" {
-			return nil, false, nil
-		}
-		return items, true, nil
+		return nodes.NodeFromArgs(items), true, nil
 	}
 
-	reader, err := breader.NewBufferedReader(dataFile, runtime.NumCPU(), chunkSize, fn)
+	reader, err := breader.NewBufferedReader(dataFile, runtime.NumCPU(), batchSize, fn)
 	checkError(err)
 
 	n := 0
@@ -73,15 +73,13 @@ func ImportGiTaxid(dbFile string, bucket string, dataFile string, chunkSize int,
 
 		records := make([][]string, len(chunk.Data))
 		for i, data := range chunk.Data {
-			switch reflect.TypeOf(data).Kind() {
-			case reflect.Slice:
-				s := reflect.ValueOf(data)
-				items := make([]string, s.Len())
-				for i := 0; i < s.Len(); i++ {
-					items[i] = s.Index(i).String()
-				}
-				records[i] = items
+			node := data.(nodes.Node)
+			nodeJSONStr, err := node.ToJSON()
+			if err != nil {
+				checkError(chunk.Err)
+				return
 			}
+			records[i] = []string{node.TaxID, nodeJSONStr}
 		}
 		write2db(records, db, bucket)
 		n += len(records)
@@ -89,22 +87,61 @@ func ImportGiTaxid(dbFile string, bucket string, dataFile string, chunkSize int,
 	}
 }
 
-// QueryGi2Taxid querys taxids by gis
-func QueryGi2Taxid(db *bolt.DB, bucket string, gis []string) ([]string, error) {
-	taxids := make([]string, len(gis))
-	if len(gis) == 0 {
-		return taxids, nil
+// QueryNodeByTaxID querys Node by taxid
+func QueryNodeByTaxID(db *bolt.DB, bucket string, taxids []string) ([]nodes.Node, error) {
+	nods := make([]nodes.Node, len(taxids))
+	if len(taxids) == 0 {
+		return nods, nil
 	}
+	err := db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		if b == nil {
+			return fmt.Errorf("database not exists: %s", bucket)
+		}
+		for i, taxid := range taxids {
+			s := string(b.Get([]byte(taxid)))
+			if s == "" {
+				nods[i] = nodes.Node{}
+				continue
+			}
+			node, err := nodes.NodeFromJSON(s)
+			checkError(err)
+			nods[i] = node
+		}
+		return nil
+	})
+	return nods, err
+}
+
+// LoadAllNodes loads all nodes into memory
+func LoadAllNodes(db *bolt.DB, bucket string) (map[string]nodes.Node, error) {
+	nods := make(map[string]nodes.Node)
+
+	ch := make(chan string, runtime.NumCPU())
+	chDone := make(chan int)
+	go func() {
+		for s := range ch {
+			node, err := nodes.NodeFromJSON(s)
+			checkError(err)
+			nods[node.TaxID] = node
+		}
+		chDone <- 1
+	}()
 
 	err := db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucket))
 		if b == nil {
 			return fmt.Errorf("database not exists: %s", bucket)
 		}
-		for i, gi := range gis {
-			taxids[i] = string(b.Get([]byte(gi)))
-		}
+
+		b.ForEach(func(k, v []byte) error {
+			ch <- string(v)
+			return nil
+		})
+
 		return nil
 	})
-	return taxids, err
+	close(ch)
+	<-chDone
+	return nods, err
 }

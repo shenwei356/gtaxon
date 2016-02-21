@@ -23,13 +23,15 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/boltdb/bolt"
+	"github.com/shenwei356/breader"
 	"github.com/shenwei356/gtaxon/taxon"
-	fileutil "github.com/shenwei356/util/file"
+	"github.com/shenwei356/gtaxon/taxon/nodes"
 	"github.com/spf13/cobra"
 )
 
@@ -41,11 +43,11 @@ var localCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		runtime.GOMAXPROCS(runtime.NumCPU())
 
-		dbType, err := cmd.Flags().GetString("type")
+		queryType, err := cmd.Flags().GetString("type")
 		checkError(err)
 		dataFile, err := cmd.Flags().GetString("file")
 		checkError(err)
-		batchSize, err := cmd.Flags().GetInt("batch-size")
+		chunkSize, err := cmd.Flags().GetInt("chunk-size")
 		checkError(err)
 		threads, err := cmd.Flags().GetInt("threads")
 		checkError(err)
@@ -63,7 +65,7 @@ var localCmd = &cobra.Command{
 
 		dbFilePath, _, _ := getDbFilePath(cmd)
 
-		switch dbType {
+		switch queryType {
 		case "":
 			log.Error("Flag -t/--type needed")
 
@@ -73,7 +75,7 @@ var localCmd = &cobra.Command{
 			if dataFile == "" {
 				queryGi2Taxid(dbFilePath, "gi_taxid_nucl", args)
 			} else {
-				queryGi2TaxidByFile(dbFilePath, "gi_taxid_nucl", dataFile, batchSize, threads)
+				queryGi2TaxidByFile(dbFilePath, "gi_taxid_nucl", dataFile, chunkSize, threads)
 			}
 
 		case "gi_taxid_prot":
@@ -82,21 +84,95 @@ var localCmd = &cobra.Command{
 			if dataFile == "" {
 				queryGi2Taxid(dbFilePath, "gi_taxid_prot", args)
 			} else {
-				queryGi2TaxidByFile(dbFilePath, "gi_taxid_prot", dataFile, batchSize, threads)
+				queryGi2TaxidByFile(dbFilePath, "gi_taxid_prot", dataFile, chunkSize, threads)
 			}
 
+		case "taxid2node":
+			taxid2node(dbFilePath, "nodes", "names", args)
+		case "name2taxid":
+			nameClass, err := cmd.Flags().GetString("name-class")
+			checkError(err)
+			useRegexp, err := cmd.Flags().GetBool("use-regexp")
+			checkError(err)
+
+			if dataFile == "" {
+				name2taxid(dbFilePath, "names", useRegexp, nameClass, args)
+			} else {
+
+			}
+		case "lca":
+			lca(dbFilePath, "nodes", args)
 		default:
-			log.Errorf("Unsupported data type: %s", dbType)
+			log.Errorf("Unsupported data type: %s", queryType)
 			os.Exit(-1)
 		}
 	},
 }
 
-func queryGi2Taxid(dbFilePath string, dataType string, gis []string) {
+func lca(dbFilePath string, nodesBucket string, queries []string) {
 	db, err := bolt.Open(dbFilePath, 0600, nil)
+	defer db.Close()
 	checkError(err)
 
-	taxids, err := taxon.QueryGi2Taxid(db, dataType, gis)
+	if nodes.Nodes == nil {
+		log.Info("load all nodes ...")
+		nods, err := taxon.LoadAllNodes(db, nodesBucket)
+		nodes.Nodes = nods
+		checkError(err)
+		log.Info("load all nodes ... done")
+	}
+	for _, query := range queries {
+		taxids := strings.Split(query, ",")
+		lca, err := nodes.LCA(nodes.Nodes, taxids)
+		checkError(err)
+		fmt.Printf("%s\t%s\n", query, lca.TaxID)
+	}
+}
+
+func name2taxid(dbFilePath string, namesBucket string, useRegexp bool, nameClass string, queries []string) {
+	db, err := bolt.Open(dbFilePath, 0600, nil)
+	defer db.Close()
+	checkError(err)
+
+	result, err := taxon.QueryTaxIDByName(db, namesBucket, useRegexp, nameClass, queries)
+	checkError(err)
+	for query, taxids := range result {
+		fmt.Printf("%s\t%s\n", query, strings.Join(taxids, ","))
+	}
+}
+
+func taxid2node(dbFilePath string, nodesBucket string, namesBucket string, queries []string) {
+	re := regexp.MustCompile(`^\d+$`)
+	for _, query := range queries {
+		if !re.MatchString(query) {
+			log.Errorf("non-digital taxid given: %s", query)
+			return
+		}
+	}
+
+	db, err := bolt.Open(dbFilePath, 0600, nil)
+	defer db.Close()
+	checkError(err)
+
+	nods, err := taxon.QueryNodeByTaxID(db, nodesBucket, queries)
+	checkError(err)
+	for i, node := range nods {
+		if node.TaxID == "" {
+			fmt.Printf("%s\t%s\n", queries[i], "")
+			continue
+		}
+		s, err := node.ToJSON()
+		checkError(err)
+		fmt.Printf("%s\t%s\n", queries[i], s)
+	}
+}
+
+func queryGi2Taxid(dbFilePath string, queryType string, gis []string) {
+	db, err := bolt.Open(dbFilePath, 0600, nil)
+	defer db.Close()
+	checkError(err)
+
+	taxids, err := taxon.QueryGi2Taxid(db, queryType, gis)
 	checkError(err)
 
 	for i, gi := range gis {
@@ -104,18 +180,18 @@ func queryGi2Taxid(dbFilePath string, dataType string, gis []string) {
 	}
 }
 
-func queryGi2TaxidByFile(dbFilePath string, dataType string, dataFile string, batchSize int, threads int) {
-	if batchSize <= 0 {
-		batchSize = 10000
+func queryGi2TaxidByFile(dbFilePath string, queryType string, dataFile string, chunkSize int, threads int) {
+	if chunkSize <= 0 {
+		chunkSize = 10000
 	}
-	fn := func(line string) (string, bool) {
-		line = strings.TrimSpace(line)
+	fn := func(line string) (interface{}, bool, error) {
+		line = strings.TrimSpace(strings.TrimRight(line, "\n"))
 		if line == "" {
-			return "", false
+			return "", false, nil
 		}
-		return line, true
+		return line, true, nil
 	}
-	chRead, err := fileutil.ReadFileWithBuffer(dataFile, batchSize, runtime.NumCPU(), fn)
+	reader, err := breader.NewBufferedReader(dataFile, runtime.NumCPU(), chunkSize, fn)
 	checkError(err)
 
 	pool := taxon.NewDBPool(dbFilePath, threads)
@@ -136,9 +212,18 @@ func queryGi2TaxidByFile(dbFilePath string, dataType string, dataFile string, ba
 	// querying
 	var wg sync.WaitGroup
 	tokens := make(chan int, threads)
-	for gis := range chRead {
+	for chunk := range reader.Ch {
+		if chunk.Err != nil {
+			checkError(chunk.Err)
+			break
+		}
 		tokens <- 1
 		wg.Add(1)
+
+		gis := make([]string, len(chunk.Data))
+		for i, data := range chunk.Data {
+			gis[i] = data.(string)
+		}
 
 		go func(gis []string) {
 			db := pool.GetDB()
@@ -148,7 +233,7 @@ func queryGi2TaxidByFile(dbFilePath string, dataType string, dataFile string, ba
 				<-tokens
 			}()
 
-			taxids, err := taxon.QueryGi2Taxid(db, dataType, gis)
+			taxids, err := taxon.QueryGi2Taxid(db, queryType, gis)
 			checkError(err)
 			chResults <- [][]string{gis, taxids}
 		}(gis)
@@ -161,7 +246,9 @@ func queryGi2TaxidByFile(dbFilePath string, dataType string, dataFile string, ba
 func init() {
 	cliCmd.AddCommand(localCmd)
 
-	localCmd.Flags().StringP("type", "t", "", "data type")
+	localCmd.Flags().StringP("name-class", "", "", "name class (only for -t name2taxid)")
+	localCmd.Flags().BoolP("use-regexp", "", false, "use regular expression (only for -t name2taxid)")
+	localCmd.Flags().StringP("type", "t", "", "query type (see introduction)")
 	localCmd.Flags().StringP("file", "f", "", "read queries from file")
-	localCmd.Flags().IntP("batch-size", "b", 100000, "batch size of querying")
+	localCmd.Flags().IntP("chunk-size", "c", 100000, "chunk size of querying")
 }

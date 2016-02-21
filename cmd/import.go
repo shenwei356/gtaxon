@@ -41,7 +41,8 @@ Supported file types includes:
   ------------------------------------------------
     gi_taxid_nucl          gi_taxid_nucl.dmp.gz
     gi_taxid_prot          gi_taxid_prot.dmp.gz
-
+    nodes                  nodes.dmp
+	names                  names.dmp
     ... to be updated
 
   ================================================
@@ -59,7 +60,7 @@ Supported file types includes:
 
 		dbFilePath, _, _ := getDbFilePath(cmd)
 
-		batchSize, err := cmd.Flags().GetInt("batch-size")
+		chunkSize, err := cmd.Flags().GetInt("chunk-size")
 		checkError(err)
 		force, err := cmd.Flags().GetBool("force")
 		checkError(err)
@@ -67,14 +68,27 @@ Supported file types includes:
 		switch fileType {
 		case "":
 			log.Error("Flag -t/--type needed")
+
 		case "gi_taxid_nucl":
 			log.Info("Import from file: %s", dataFile)
 
-			taxon.LoadGiTaxid(dbFilePath, "gi_taxid_nucl", dataFile, batchSize, force)
+			taxon.ImportGiTaxid(dbFilePath, "gi_taxid_nucl", dataFile, chunkSize, force)
+
 		case "gi_taxid_prot":
 			log.Info("Import from file: %s", dataFile)
 
-			taxon.LoadGiTaxid(dbFilePath, "gi_taxid_prot", dataFile, batchSize, force)
+			taxon.ImportGiTaxid(dbFilePath, "gi_taxid_prot", dataFile, chunkSize, force)
+
+		case "nodes":
+			log.Info("Import from file: %s", dataFile)
+
+			taxon.ImportNodes(dbFilePath, "nodes", dataFile, chunkSize, force)
+
+		case "names":
+			log.Info("Import from file: %s", dataFile)
+
+			taxon.ImportNames(dbFilePath, "names", dataFile, chunkSize, force)
+
 		default:
 			log.Errorf("Unsupported filetype: %s", fileType)
 			os.Exit(-1)
@@ -87,5 +101,5 @@ func init() {
 
 	importCmd.Flags().StringP("type", "t", "", "data type. see above description")
 	importCmd.Flags().BoolP("force", "f", false, "delete exited subdatabase")
-	importCmd.Flags().IntP("batch-size", "b", 100000, "batch size of records when writting database (do not change this)")
+	importCmd.Flags().IntP("chunk-size", "c", 100000, "chunk size of records when writting database (do not change this)")
 }
