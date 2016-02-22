@@ -22,7 +22,6 @@ package taxon
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -34,17 +33,54 @@ import (
 	"github.com/boltdb/bolt"
 	"github.com/gin-gonic/gin"
 	"github.com/parnurzeal/gorequest"
+	"github.com/shenwei356/gtaxon/taxon/nodes"
 )
+
+var threadNum int
 
 // StartServer runs a web server for query
 func StartServer(dbFilePath string, port int, timeout int, threads int) {
-	runtime.GOMAXPROCS(runtime.NumCPU())
+	runtime.GOMAXPROCS(threads)
+	threadNum = threads
 	pool = NewDBPool(dbFilePath, threads)
 
-	gin.SetMode(gin.ReleaseMode)
+	done := make(chan int)
+	go func() {
+		db := pool.GetDB()
+		defer pool.ReleaseDB(db)
+
+		log.Info("load all names ...")
+		names, err := LoadAllNames(db, "names")
+		checkError(err)
+		nodes.SetNames(names)
+		log.Info("load all names ... done")
+		done <- 1
+	}()
+
+	done1 := make(chan int)
+	go func() {
+		db := pool.GetDB()
+		defer pool.ReleaseDB(db)
+
+		log.Info("load all nodes ...")
+		nods, err := LoadAllNodes(db, "nodes")
+		nodes.SetNodes(nods)
+		checkError(err)
+		log.Info("load all nodes ... done")
+
+		done1 <- 1
+	}()
+
+	<-done
+	<-done1
+
+	// gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 
 	router.GET("/gi2taxid", gi2taxid)
+	router.GET("/taxid2node", taxid2node)
+	router.GET("/name2taxid", name2taxid)
+	router.GET("/lca", lca)
 
 	// router.Run(fmt.Sprintf(":%d", port))
 	s := &http.Server{
@@ -57,19 +93,147 @@ func StartServer(dbFilePath string, port int, timeout int, threads int) {
 	s.ListenAndServe()
 }
 
-// ErrDBNotFound is a error
-var ErrDBNotFound = errors.New("DB not found")
+// --------------------------------------------------------------------------
 
-type gi2Taxid struct {
+type messageLCA struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`
 
-	Gis    []string `json:"gis"`
+	LCA map[string]nodes.Node `json:"LCA"`
+}
+
+func lca(c *gin.Context) {
+	var msg messageLCA
+
+	c.Request.ParseForm()
+	queries := c.Request.Form["taxids"]
+
+	if queries == nil {
+		msg.Status = "FAILED"
+		msg.Message = "no Taxids given"
+		c.JSON(http.StatusOK, msg)
+		return
+	}
+
+	db := pool.GetDB()
+	defer pool.ReleaseDB(db)
+
+	result := make(map[string]nodes.Node)
+	for _, query := range queries {
+		taxids := strings.Split(query, ",")
+		lca, err := nodes.LCA(nodes.Nodes, taxids)
+		if err != nil {
+			msg.Status = "FAILED"
+			msg.Message = fmt.Sprintf("error: %s", err)
+			c.JSON(http.StatusOK, msg)
+			return
+		}
+		result[query] = lca
+	}
+
+	msg.Status = "OK"
+	msg.Message = fmt.Sprintf("sum: %d", len(queries))
+	msg.LCA = result
+	c.JSON(http.StatusOK, msg)
+}
+
+// --------------------------------------------------------------------------
+
+type messageNode struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+
+	Nodes []nodes.Node `json:"Nodes"`
+}
+
+func taxid2node(c *gin.Context) {
+	var msg messageNode
+
+	c.Request.ParseForm()
+	taxids := c.Request.Form["taxid"]
+
+	if taxids == nil {
+		msg.Status = "FAILED"
+		msg.Message = "no Taxids given"
+		c.JSON(http.StatusOK, msg)
+		return
+	}
+
+	db := pool.GetDB()
+	defer pool.ReleaseDB(db)
+
+	bucket := "nodes"
+	nods, err := QueryNodeByTaxID(db, bucket, taxids)
+	if err != nil {
+		msg.Status = "FAILED"
+		msg.Message = fmt.Sprintf("error: %s", err)
+		c.JSON(http.StatusOK, msg)
+		return
+	}
+	msg.Status = "OK"
+	msg.Message = fmt.Sprintf("sum: %d", len(taxids))
+	msg.Nodes = nods
+	c.JSON(http.StatusOK, msg)
+}
+
+// --------------------------------------------------------------------------
+
+type messageName2TaxID struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+
+	TaxIDs map[string][]string `json:"TaxIDs"`
+}
+
+func name2taxid(c *gin.Context) {
+	var msg messageName2TaxID
+
+	c.Request.ParseForm()
+	useRegexp := false
+	if c.Query("regexp") != "" {
+		useRegexp = true
+	}
+	nameClass := ""
+	if c.Query("class") != "" {
+		nameClass = c.Query("class")
+	}
+	names := c.Request.Form["name"]
+
+	if names == nil {
+		msg.Status = "FAILED"
+		msg.Message = "no names given"
+		c.JSON(http.StatusOK, msg)
+		return
+	}
+
+	db := pool.GetDB()
+	defer pool.ReleaseDB(db)
+
+	bucket := "names"
+	results, err := QueryTaxIDByName(db, bucket, useRegexp, nameClass, threadNum*2, names)
+	if err != nil {
+		msg.Status = "FAILED"
+		msg.Message = fmt.Sprintf("error: %s", err)
+		c.JSON(http.StatusOK, msg)
+		return
+	}
+	msg.Status = "OK"
+	msg.Message = fmt.Sprintf("sum: %d", len(names))
+	msg.TaxIDs = results
+	c.JSON(http.StatusOK, msg)
+}
+
+// --------------------------------------------------------------------------
+
+type messageTaxid struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+
 	Taxids []string `json:"taxids"`
 }
 
 func gi2taxid(c *gin.Context) {
-	var msg gi2Taxid
+	var msg messageTaxid
 
 	// gi := c.Query("gi")  // single value
 	// multiple values
@@ -99,7 +263,7 @@ func gi2taxid(c *gin.Context) {
 	err := db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucket))
 		if b == nil {
-			return ErrDBNotFound
+			return fmt.Errorf("db not found: %s", bucket)
 		}
 		for i, gi := range gis {
 			taxid := string(b.Get([]byte(gi)))
@@ -111,12 +275,6 @@ func gi2taxid(c *gin.Context) {
 		return nil
 	})
 	if err != nil {
-		if err == ErrDBNotFound {
-			msg.Status = "FAILED"
-			msg.Message = fmt.Sprintf("DB not found: %s", bucket)
-			c.JSON(http.StatusOK, msg)
-			return
-		}
 		msg.Status = "FAILED"
 		msg.Message = fmt.Sprintf("error: %s", err)
 		c.JSON(http.StatusOK, msg)
@@ -124,13 +282,12 @@ func gi2taxid(c *gin.Context) {
 	}
 	msg.Status = "OK"
 	msg.Message = fmt.Sprintf("sum: %d, found: %d", len(gis), n)
-	msg.Gis = gis
 	msg.Taxids = taxids
 	c.JSON(http.StatusOK, msg)
 }
 
 // RemoteQueryGi2Taxid query from remote server
-func RemoteQueryGi2Taxid(host string, port int, dbType string, gis []string) ([]string, []string) {
+func RemoteQueryGi2Taxid(host string, port int, dbType string, gis []string) []string {
 	host = strings.TrimSpace(host)
 	var url string
 	if regexp.MustCompile("^http://").MatchString(host) {
@@ -151,9 +308,9 @@ func RemoteQueryGi2Taxid(host string, port int, dbType string, gis []string) ([]
 		os.Exit(-1)
 	}
 
-	var result gi2Taxid
+	var result messageTaxid
 	err := json.Unmarshal([]byte(body), &result)
 	checkError(err)
 
-	return result.Gis, result.Taxids
+	return result.Taxids
 }

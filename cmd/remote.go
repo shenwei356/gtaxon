@@ -94,7 +94,7 @@ var remoteCmd = &cobra.Command{
 }
 
 func remoteQueryGi2Taxid(host string, port int, dataType string, gis []string) {
-	gis, taxids := taxon.RemoteQueryGi2Taxid(host, port, dataType, gis)
+	taxids := taxon.RemoteQueryGi2Taxid(host, port, dataType, gis)
 	for i, gi := range gis {
 		fmt.Printf("%s\t%s\n", gi, taxids[i])
 	}
@@ -146,7 +146,7 @@ func remoteQueryGi2TaxidByFile(host string, port int, dataType string, dataFile 
 				<-tokens
 			}()
 
-			gis, taxids := taxon.RemoteQueryGi2Taxid(host, port, dataType, gis)
+			taxids := taxon.RemoteQueryGi2Taxid(host, port, dataType, gis)
 			checkError(err)
 			chResults <- [][]string{gis, taxids}
 		}(gis)

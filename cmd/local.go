@@ -23,7 +23,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -31,7 +30,6 @@ import (
 	"github.com/boltdb/bolt"
 	"github.com/shenwei356/breader"
 	"github.com/shenwei356/gtaxon/taxon"
-	"github.com/shenwei356/gtaxon/taxon/nodes"
 	"github.com/spf13/cobra"
 )
 
@@ -86,85 +84,11 @@ var localCmd = &cobra.Command{
 			} else {
 				queryGi2TaxidByFile(dbFilePath, "gi_taxid_prot", dataFile, chunkSize, threads)
 			}
-
-		case "taxid2node":
-			taxid2node(dbFilePath, "nodes", "names", args)
-		case "name2taxid":
-			nameClass, err := cmd.Flags().GetString("name-class")
-			checkError(err)
-			useRegexp, err := cmd.Flags().GetBool("use-regexp")
-			checkError(err)
-
-			if dataFile == "" {
-				name2taxid(dbFilePath, "names", useRegexp, nameClass, args)
-			} else {
-
-			}
-		case "lca":
-			lca(dbFilePath, "nodes", args)
 		default:
 			log.Errorf("Unsupported data type: %s", queryType)
 			os.Exit(-1)
 		}
 	},
-}
-
-func lca(dbFilePath string, nodesBucket string, queries []string) {
-	db, err := bolt.Open(dbFilePath, 0600, nil)
-	defer db.Close()
-	checkError(err)
-
-	if nodes.Nodes == nil {
-		log.Info("load all nodes ...")
-		nods, err := taxon.LoadAllNodes(db, nodesBucket)
-		nodes.Nodes = nods
-		checkError(err)
-		log.Info("load all nodes ... done")
-	}
-	for _, query := range queries {
-		taxids := strings.Split(query, ",")
-		lca, err := nodes.LCA(nodes.Nodes, taxids)
-		checkError(err)
-		fmt.Printf("%s\t%s\n", query, lca.TaxID)
-	}
-}
-
-func name2taxid(dbFilePath string, namesBucket string, useRegexp bool, nameClass string, queries []string) {
-	db, err := bolt.Open(dbFilePath, 0600, nil)
-	defer db.Close()
-	checkError(err)
-
-	result, err := taxon.QueryTaxIDByName(db, namesBucket, useRegexp, nameClass, queries)
-	checkError(err)
-	for query, taxids := range result {
-		fmt.Printf("%s\t%s\n", query, strings.Join(taxids, ","))
-	}
-}
-
-func taxid2node(dbFilePath string, nodesBucket string, namesBucket string, queries []string) {
-	re := regexp.MustCompile(`^\d+$`)
-	for _, query := range queries {
-		if !re.MatchString(query) {
-			log.Errorf("non-digital taxid given: %s", query)
-			return
-		}
-	}
-
-	db, err := bolt.Open(dbFilePath, 0600, nil)
-	defer db.Close()
-	checkError(err)
-
-	nods, err := taxon.QueryNodeByTaxID(db, nodesBucket, queries)
-	checkError(err)
-	for i, node := range nods {
-		if node.TaxID == "" {
-			fmt.Printf("%s\t%s\n", queries[i], "")
-			continue
-		}
-		s, err := node.ToJSON()
-		checkError(err)
-		fmt.Printf("%s\t%s\n", queries[i], s)
-	}
 }
 
 func queryGi2Taxid(dbFilePath string, queryType string, gis []string) {
@@ -245,9 +169,6 @@ func queryGi2TaxidByFile(dbFilePath string, queryType string, dataFile string, c
 
 func init() {
 	cliCmd.AddCommand(localCmd)
-
-	localCmd.Flags().StringP("name-class", "", "", "name class (only for -t name2taxid)")
-	localCmd.Flags().BoolP("use-regexp", "", false, "use regular expression (only for -t name2taxid)")
 	localCmd.Flags().StringP("type", "t", "", "query type (see introduction)")
 	localCmd.Flags().StringP("file", "f", "", "read queries from file")
 	localCmd.Flags().IntP("chunk-size", "c", 100000, "chunk size of querying")

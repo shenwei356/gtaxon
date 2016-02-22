@@ -24,6 +24,7 @@ package nodes
 import (
 	"encoding/json"
 	"errors"
+	"sync"
 
 	"github.com/shenwei356/util/stringutil"
 )
@@ -49,6 +50,8 @@ type Node struct {
 	HiddenSubtreeRootFlag bool `json:"HiddenSubtreeRootFlag"`
 
 	Comments string `json:"Comments"`
+
+	Names []NameItem `json:"Names"`
 }
 
 // ToJSON get the JSON string of a node
@@ -117,6 +120,15 @@ func NodeFromArgs(items []string) Node {
 // Nodes is a map storing all nodes
 var Nodes map[string]Node
 
+var mutex2 = &sync.Mutex{}
+
+// SetNodes sets Nodes
+func SetNodes(nodes map[string]Node) {
+	mutex2.Lock()
+	Nodes = nodes
+	mutex2.Unlock()
+}
+
 // LCA return the lowest common ancestor for a list of taxids
 func LCA(nodes map[string]Node, taxids []string) (Node, error) {
 	if Nodes == nil {
@@ -169,12 +181,18 @@ func LCA(nodes map[string]Node, taxids []string) (Node, error) {
 func ancestorsOfNode(nodes map[string]Node, node Node) []Node {
 	current := node
 	parrent := nodes[current.PTaxID]
-	ancestors := []Node{}
+	ancestors := []Node{current}
 
 	for parrent.TaxID != "1" {
 		ancestors = append(ancestors, parrent)
 		current = parrent
 		parrent = nodes[current.PTaxID]
 	}
+
+	if current.TaxID != "1" {
+		ancestors = append(ancestors, parrent) // root
+		return ancestors
+	}
+
 	return ancestors
 }

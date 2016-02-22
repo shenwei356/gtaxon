@@ -21,6 +21,7 @@
 package taxon
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"runtime"
@@ -31,7 +32,7 @@ import (
 	"github.com/shenwei356/gtaxon/taxon/nodes"
 )
 
-// ImportNodes reads
+// ImportNodes reads data from nodes.dmp and write to bolt database
 func ImportNodes(dbFile string, bucket string, dataFile string, batchSize int, force bool) {
 	db, err := bolt.Open(dbFile, 0600, nil)
 	checkError(err)
@@ -87,8 +88,15 @@ func ImportNodes(dbFile string, bucket string, dataFile string, batchSize int, f
 	}
 }
 
+var reDigitals = regexp.MustCompile(`^\d+$`)
+
 // QueryNodeByTaxID querys Node by taxid
 func QueryNodeByTaxID(db *bolt.DB, bucket string, taxids []string) ([]nodes.Node, error) {
+	for _, taxid := range taxids {
+		if !reDigitals.MatchString(taxid) {
+			return []nodes.Node{}, fmt.Errorf("non-digital taxid given: %s", taxid)
+		}
+	}
 	nods := make([]nodes.Node, len(taxids))
 	if len(taxids) == 0 {
 		return nods, nil
@@ -105,7 +113,9 @@ func QueryNodeByTaxID(db *bolt.DB, bucket string, taxids []string) ([]nodes.Node
 				continue
 			}
 			node, err := nodes.NodeFromJSON(s)
-			checkError(err)
+			if err != nil {
+				return errors.New("failed to parse node record from database")
+			}
 			nods[i] = node
 		}
 		return nil

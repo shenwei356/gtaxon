@@ -3,7 +3,7 @@
 ## Introduction
 
 gTaxon - a fast cross-platform NCBI taxonomy data querying tool,
-with cmd client ans REST API server for both local and remote server.
+with cmd client and REST API server for both local and remote server.
 [http:///github.com/shenwei356/gtaxon](http:///github.com/shenwei356/gtaxon)
 
 ## Supporting querying types

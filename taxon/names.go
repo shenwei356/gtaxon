@@ -32,7 +32,7 @@ import (
 	"github.com/shenwei356/gtaxon/taxon/nodes"
 )
 
-// ImportNames reads
+// ImportNames reads data from names.dmp and write to bolt database
 func ImportNames(dbFile string, bucket string, dataFile string, chunkSize int, force bool) {
 	db, err := bolt.Open(dbFile, 0600, nil)
 	checkError(err)
@@ -128,6 +128,32 @@ func ImportNames(dbFile string, bucket string, dataFile string, chunkSize int, f
 	<-chDone
 }
 
+// QueryNameByTaxID querys Name by taxid
+func QueryNameByTaxID(db *bolt.DB, bucket string, taxids []string) ([]nodes.Name, error) {
+	names := make([]nodes.Name, len(taxids))
+	if len(taxids) == 0 {
+		return names, nil
+	}
+	err := db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		if b == nil {
+			return fmt.Errorf("database not exists: %s", bucket)
+		}
+		for i, taxid := range taxids {
+			s := string(b.Get([]byte(taxid)))
+			if s == "" {
+				names[i] = nodes.Name{}
+				continue
+			}
+			name, err := nodes.NameFromJSON(s)
+			checkError(err)
+			names[i] = name
+		}
+		return nil
+	})
+	return names, err
+}
+
 // LoadAllNames loads all names into memory
 func LoadAllNames(db *bolt.DB, bucket string) (map[string]nodes.Name, error) {
 	names := make(map[string]nodes.Name)
@@ -162,14 +188,14 @@ func LoadAllNames(db *bolt.DB, bucket string) (map[string]nodes.Name, error) {
 }
 
 // QueryTaxIDByName query taxid by name
-func QueryTaxIDByName(db *bolt.DB, bucket string, useRegexp bool, nameClass string, queries []string) (map[string][]string, error) {
+func QueryTaxIDByName(db *bolt.DB, bucket string, useRegexp bool, nameClass string, threads int, queries []string) (map[string][]string, error) {
 	if nodes.Names == nil {
 		log.Info("load all names ...")
 		names, err := LoadAllNames(db, bucket)
 		if err != nil {
 			return nil, err
 		}
-		nodes.Names = names
+		nodes.SetNames(names)
 		log.Info("load all names ... done")
 	}
 
@@ -183,7 +209,7 @@ func QueryTaxIDByName(db *bolt.DB, bucket string, useRegexp bool, nameClass stri
 
 	result := make(map[string][]string)
 
-	chResult := make(chan []string, runtime.NumCPU())
+	chResult := make(chan []string, threads)
 	chDone := make(chan int)
 	go func() {
 		for s := range chResult {
@@ -197,7 +223,7 @@ func QueryTaxIDByName(db *bolt.DB, bucket string, useRegexp bool, nameClass stri
 	}()
 
 	var wg sync.WaitGroup
-	tokens := make(chan int, runtime.NumCPU())
+	tokens := make(chan int, threads)
 	var limitNameClass bool
 	if nameClass != "" {
 		limitNameClass = true

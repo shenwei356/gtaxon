@@ -21,7 +21,10 @@
 //Package nodes a
 package nodes
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"sync"
+)
 
 // NameItem defines
 type NameItem struct {
@@ -85,3 +88,12 @@ func MergeNames(names ...Name) Name {
 
 // Names is a map storing all names
 var Names map[string]Name
+
+var mutex1 = &sync.Mutex{}
+
+// SetNames sets Names
+func SetNames(names map[string]Name) {
+	mutex1.Lock()
+	Names = names
+	mutex1.Unlock()
+}
