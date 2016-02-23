@@ -105,7 +105,7 @@ func StartServer(dbFilePath string, port int, timeout int, threads int) {
 	<-done
 	<-done1
 
-	// gin.SetMode(gin.ReleaseMode)
+	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 
 	router.GET("/gi2taxid", gi2taxid)
