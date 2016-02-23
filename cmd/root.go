@@ -38,6 +38,7 @@ var RootCmd = &cobra.Command{
 	Long: `gtaxon - a fast cross-platform NCBI taxonomy data querying tool,
 with cmd client ans REST API server for both local and remote server.
 
+Version: V0.2
 Detail: http://github.com/shenwei356/gtaxon
 `,
 }

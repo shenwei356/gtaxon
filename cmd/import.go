@@ -42,9 +42,9 @@ Supported file types includes:
     gi_taxid_nucl          gi_taxid_nucl.dmp.gz
     gi_taxid_prot          gi_taxid_prot.dmp.gz
     nodes                  nodes.dmp
-	names                  names.dmp
-    ... to be updated
-
+    names                  names.dmp
+    divisions              division.dmp
+    gencodes               gencode.dmp
   ================================================
 
 `,
@@ -88,6 +88,16 @@ Supported file types includes:
 			log.Info("Import from file: %s", dataFile)
 
 			taxon.ImportNames(dbFilePath, "names", dataFile, chunkSize, force)
+
+		case "divisions":
+			log.Info("Import from file: %s", dataFile)
+
+			taxon.ImportDivisions(dbFilePath, "divisions", dataFile, chunkSize, force)
+
+		case "gencodes":
+			log.Info("Import from file: %s", dataFile)
+
+			taxon.ImportGenCodes(dbFilePath, "gencodes", dataFile, chunkSize, force)
 
 		default:
 			log.Errorf("Unsupported filetype: %s", fileType)

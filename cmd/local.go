@@ -37,7 +37,14 @@ import (
 var localCmd = &cobra.Command{
 	Use:   "local",
 	Short: "query from local database",
-	Long:  ``,
+	Long: `query from local database.
+
+Available query types:
+
+    gi_taxid_nucl      query TaxId by Gi (nucl)
+    gi_taxid_prot      query TaxId by Gi (prot)
+
+`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runtime.GOMAXPROCS(runtime.NumCPU())
 

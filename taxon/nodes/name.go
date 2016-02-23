@@ -26,17 +26,17 @@ import (
 	"sync"
 )
 
+// Name includes all names for a taxid
+type Name struct {
+	TaxID string     `json:"TaxID"`
+	Names []NameItem `json:"Names"`
+}
+
 // NameItem defines
 type NameItem struct {
 	Name       string `json:"Name"`
 	UniqueName string `json:"UniqueName"`
 	NameClass  string `json:"NameClass"`
-}
-
-// Name includes all names for a taxid
-type Name struct {
-	TaxID string     `json:"TaxID"`
-	Names []NameItem `json:"Names"`
 }
 
 // ToJSON transforms Name to JSON string

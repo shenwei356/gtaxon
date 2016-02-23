@@ -27,6 +27,7 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,6 +72,36 @@ func StartServer(dbFilePath string, port int, timeout int, threads int) {
 		done1 <- 1
 	}()
 
+	done2 := make(chan int)
+	go func() {
+		db := pool.GetDB()
+		defer pool.ReleaseDB(db)
+
+		log.Info("load all divisions ...")
+		divisions, err := LoadAllDivisions(db, "divisions")
+		nodes.SetDivisions(divisions)
+		checkError(err)
+		log.Info("load all divisions ... done")
+
+		done2 <- 1
+	}()
+
+	done3 := make(chan int)
+	go func() {
+		db := pool.GetDB()
+		defer pool.ReleaseDB(db)
+
+		log.Info("load all gencodes ...")
+		gencodes, err := LoadAllGenCodes(db, "gencodes")
+		nodes.SetGenCodes(gencodes)
+		checkError(err)
+		log.Info("load all gencodes ... done")
+
+		done3 <- 1
+	}()
+
+	<-done2
+	<-done3
 	<-done
 	<-done1
 
@@ -78,7 +109,7 @@ func StartServer(dbFilePath string, port int, timeout int, threads int) {
 	router := gin.Default()
 
 	router.GET("/gi2taxid", gi2taxid)
-	router.GET("/taxid2node", taxid2node)
+	router.GET("/taxid2taxon", taxid2taxon)
 	router.GET("/name2taxid", name2taxid)
 	router.GET("/lca", lca)
 
@@ -95,15 +126,16 @@ func StartServer(dbFilePath string, port int, timeout int, threads int) {
 
 // --------------------------------------------------------------------------
 
-type messageLCA struct {
+// MessageLCAMap is
+type MessageLCAMap struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`
 
-	LCA map[string]nodes.Node `json:"LCA"`
+	LCA map[string]nodes.Taxon `json:"taxids2taxon"`
 }
 
 func lca(c *gin.Context) {
-	var msg messageLCA
+	var msg MessageLCAMap
 
 	c.Request.ParseForm()
 	queries := c.Request.Form["taxids"]
@@ -133,21 +165,55 @@ func lca(c *gin.Context) {
 
 	msg.Status = "OK"
 	msg.Message = fmt.Sprintf("sum: %d", len(queries))
-	msg.LCA = result
+	msg.LCA = make(map[string]nodes.Taxon, len(result))
+	for k, node := range result {
+		msg.LCA[k], _ = nodes.GetTaxonByTaxID(node.TaxID)
+	}
+
 	c.JSON(http.StatusOK, msg)
+}
+
+// RemoteQueryLCA is
+func RemoteQueryLCA(host string, port int, queries []string) MessageLCAMap {
+	host = strings.TrimSpace(host)
+	var url string
+	if regexp.MustCompile("^http://").MatchString(host) {
+		url = fmt.Sprintf("%s:%d/lca", host, port)
+	} else {
+		url = fmt.Sprintf("http://%s:%d/lca", host, port)
+	}
+
+	request := gorequest.New().Get(url)
+
+	for _, query := range queries {
+		request = request.Param("taxids", query)
+	}
+
+	_, body, errs := request.End()
+	if errs != nil {
+		log.Error(errs)
+		os.Exit(-1)
+	}
+
+	var result MessageLCAMap
+	err := json.Unmarshal([]byte(body), &result)
+	checkError(err)
+
+	return result
 }
 
 // --------------------------------------------------------------------------
 
-type messageNode struct {
+// MessageTaxid2TaxonMap is
+type MessageTaxid2TaxonMap struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`
 
-	Nodes []nodes.Node `json:"Nodes"`
+	Taxons map[string]nodes.Taxon `json:"taxid2taxon"`
 }
 
-func taxid2node(c *gin.Context) {
-	var msg messageNode
+func taxid2taxon(c *gin.Context) {
+	var msg MessageTaxid2TaxonMap
 
 	c.Request.ParseForm()
 	taxids := c.Request.Form["taxid"]
@@ -171,22 +237,62 @@ func taxid2node(c *gin.Context) {
 		return
 	}
 	msg.Status = "OK"
-	msg.Message = fmt.Sprintf("sum: %d", len(taxids))
-	msg.Nodes = nods
+	msg.Message = fmt.Sprintf("sum: %d", len(nods))
+	msg.Taxons = make(map[string]nodes.Taxon)
+	for _, node := range nods {
+		taxon, _ := nodes.GetTaxonByTaxID(node.TaxID)
+		msg.Taxons[node.TaxID] = taxon
+	}
 	c.JSON(http.StatusOK, msg)
+}
+
+// RemoteQueryTaxid2Taxon is
+func RemoteQueryTaxid2Taxon(host string, port int, taxids []string) MessageTaxid2TaxonMap {
+	host = strings.TrimSpace(host)
+	var url string
+	if regexp.MustCompile("^http://").MatchString(host) {
+		url = fmt.Sprintf("%s:%d/taxid2taxon", host, port)
+	} else {
+		url = fmt.Sprintf("http://%s:%d/taxid2taxon", host, port)
+	}
+
+	request := gorequest.New().Get(url)
+
+	for _, taxid := range taxids {
+		request = request.Param("taxid", taxid)
+	}
+
+	_, body, errs := request.End()
+	if errs != nil {
+		log.Error(errs)
+		os.Exit(-1)
+	}
+
+	var result MessageTaxid2TaxonMap
+	err := json.Unmarshal([]byte(body), &result)
+	checkError(err)
+
+	return result
 }
 
 // --------------------------------------------------------------------------
 
-type messageName2TaxID struct {
+// MssageName2TaxIDMap is
+type MssageName2TaxIDMap struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`
 
-	TaxIDs map[string][]string `json:"TaxIDs"`
+	TaxIDs map[string][]TaxIDSciNameItem `json:"name2taxid"`
+}
+
+// TaxIDSciNameItem is
+type TaxIDSciNameItem struct {
+	TaxID          int
+	ScientificName string
 }
 
 func name2taxid(c *gin.Context) {
-	var msg messageName2TaxID
+	var msg MssageName2TaxIDMap
 
 	c.Request.ParseForm()
 	useRegexp := false
@@ -219,21 +325,76 @@ func name2taxid(c *gin.Context) {
 	}
 	msg.Status = "OK"
 	msg.Message = fmt.Sprintf("sum: %d", len(names))
-	msg.TaxIDs = results
+
+	name2taxidResults := make(map[string][]TaxIDSciNameItem, len(results))
+	for name, taxids := range results {
+		taxidsSciNameItems := make([]TaxIDSciNameItem, len(taxids))
+		for i, taxid := range taxids {
+			node := nodes.Nodes[taxid]
+			taxidInt, _ := strconv.Atoi(node.TaxID)
+			scientificName := ""
+			for _, nameItem := range nodes.Names[node.TaxID].Names {
+				if nameItem.NameClass == "scientific name" {
+					scientificName = nameItem.Name
+				}
+			}
+			taxidsSciNameItems[i] = TaxIDSciNameItem{
+				TaxID:          taxidInt,
+				ScientificName: scientificName,
+			}
+		}
+		name2taxidResults[name] = taxidsSciNameItems
+	}
+	msg.TaxIDs = name2taxidResults
 	c.JSON(http.StatusOK, msg)
+}
+
+// RemoteQueryName2TaxID is
+func RemoteQueryName2TaxID(host string, port int, useRegexp bool, nameClass string, names []string) MssageName2TaxIDMap {
+	host = strings.TrimSpace(host)
+	var url string
+	if regexp.MustCompile("^http://").MatchString(host) {
+		url = fmt.Sprintf("%s:%d/name2taxid", host, port)
+	} else {
+		url = fmt.Sprintf("http://%s:%d/name2taxid", host, port)
+	}
+
+	request := gorequest.New().Get(url)
+	if useRegexp {
+		request = request.Param("regexp", "1")
+	}
+	if nameClass != "" {
+		request = request.Param("class", nameClass)
+	}
+
+	for _, name := range names {
+		request = request.Param("name", name)
+	}
+
+	_, body, errs := request.End()
+	if errs != nil {
+		log.Error(errs)
+		os.Exit(-1)
+	}
+
+	var result MssageName2TaxIDMap
+	err := json.Unmarshal([]byte(body), &result)
+	checkError(err)
+	return result
 }
 
 // --------------------------------------------------------------------------
 
-type messageTaxid struct {
+// MessageGI2TaxidMap is
+type MessageGI2TaxidMap struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`
 
-	Taxids []string `json:"taxids"`
+	Taxids map[string]string `json:"gi2taxid"`
 }
 
 func gi2taxid(c *gin.Context) {
-	var msg messageTaxid
+	var msg MessageGI2TaxidMap
 
 	// gi := c.Query("gi")  // single value
 	// multiple values
@@ -258,19 +419,19 @@ func gi2taxid(c *gin.Context) {
 	db := pool.GetDB()
 	defer pool.ReleaseDB(db)
 
-	taxids := make([]string, len(gis))
+	taxids := make(map[string]string, len(gis))
 	n := 0 // counter of seccessful query
 	err := db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucket))
 		if b == nil {
 			return fmt.Errorf("db not found: %s", bucket)
 		}
-		for i, gi := range gis {
+		for _, gi := range gis {
 			taxid := string(b.Get([]byte(gi)))
 			if taxid != "" {
 				n++
 			}
-			taxids[i] = taxid
+			taxids[gi] = taxid
 		}
 		return nil
 	})
@@ -287,7 +448,7 @@ func gi2taxid(c *gin.Context) {
 }
 
 // RemoteQueryGi2Taxid query from remote server
-func RemoteQueryGi2Taxid(host string, port int, dbType string, gis []string) []string {
+func RemoteQueryGi2Taxid(host string, port int, dbType string, gis []string) MessageGI2TaxidMap {
 	host = strings.TrimSpace(host)
 	var url string
 	if regexp.MustCompile("^http://").MatchString(host) {
@@ -296,7 +457,7 @@ func RemoteQueryGi2Taxid(host string, port int, dbType string, gis []string) []s
 		url = fmt.Sprintf("http://%s:%d/gi2taxid", host, port)
 	}
 
-	request := gorequest.New().Get(url).Set("db", dbType)
+	request := gorequest.New().Get(url).Param("db", dbType)
 
 	for _, gi := range gis {
 		request = request.Param("gi", gi)
@@ -308,9 +469,9 @@ func RemoteQueryGi2Taxid(host string, port int, dbType string, gis []string) []s
 		os.Exit(-1)
 	}
 
-	var result messageTaxid
+	var result MessageGI2TaxidMap
 	err := json.Unmarshal([]byte(body), &result)
 	checkError(err)
 
-	return result.Taxids
+	return result
 }

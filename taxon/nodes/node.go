@@ -50,8 +50,6 @@ type Node struct {
 	HiddenSubtreeRootFlag bool `json:"HiddenSubtreeRootFlag"`
 
 	Comments string `json:"Comments"`
-
-	Names []NameItem `json:"Names"`
 }
 
 // ToJSON get the JSON string of a node
@@ -135,7 +133,7 @@ func LCA(nodes map[string]Node, taxids []string) (Node, error) {
 		return Node{}, errors.New("nodes is nil")
 	}
 	if len(taxids) < 2 {
-		return Node{}, errors.New(">=2 taxids needed")
+		return Node{}, errors.New("at least 2 taxids needed")
 	}
 
 	currents := make(map[string]Node)
@@ -178,6 +176,7 @@ func LCA(nodes map[string]Node, taxids []string) (Node, error) {
 	return nodes[sorted[0].Key], nil
 }
 
+// ancestorsOfNode result including root node
 func ancestorsOfNode(nodes map[string]Node, node Node) []Node {
 	current := node
 	parrent := nodes[current.PTaxID]

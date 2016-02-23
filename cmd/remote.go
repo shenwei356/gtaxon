@@ -21,6 +21,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime"
@@ -36,7 +37,18 @@ import (
 var remoteCmd = &cobra.Command{
 	Use:   "remote",
 	Short: "query from remote server",
-	Long:  ``,
+	Long: `query from remote server.
+
+Available query types:
+
+    gi_taxid_nucl      query TaxId by Gi (nucl)
+    gi_taxid_prot      query TaxId by Gi (prot)
+
+    taxid2taxon        query Taxon by TaxId
+    name2taxid         query TaxId by Name
+    lca                query Lowest Common Ancestor by TaxIds
+
+`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -86,6 +98,37 @@ var remoteCmd = &cobra.Command{
 				remoteQueryGi2TaxidByFile(host, port, "gi_taxid_prot", dataFile, chunkSize, threads)
 			}
 
+		case "taxid2taxon":
+			log.Info("Query Taxon by TaxId from host: %s:%d", host, port)
+
+			if dataFile == "" {
+				remoteQueryTaxid2Taxon(host, port, args)
+			} else {
+				remoteQueryTaxid2TaxonByFile(host, port, dataFile, chunkSize, threads)
+			}
+
+		case "name2taxid":
+			log.Info("Query TaxId by Name from host: %s:%d", host, port)
+
+			nameClass, err := cmd.Flags().GetString("name-class")
+			checkError(err)
+			useRegexp, err := cmd.Flags().GetBool("use-regexp")
+			checkError(err)
+			if dataFile == "" {
+				remoteName2TaxID(host, port, useRegexp, nameClass, args)
+			} else {
+				remoteName2TaxIDByFile(host, port, useRegexp, nameClass, dataFile, chunkSize, threads)
+			}
+
+		case "lca":
+			log.Info("Query LCA by TaxIds from host: %s:%d", host, port)
+
+			if dataFile == "" {
+				remoteQueryLCA(host, port, args)
+			} else {
+				remoteQueryLCAByFile(host, port, dataFile, chunkSize, threads)
+			}
+
 		default:
 			log.Errorf("Unsupported data type: %s", dataType)
 			os.Exit(-1)
@@ -93,10 +136,248 @@ var remoteCmd = &cobra.Command{
 	},
 }
 
+// --------------------------------------------------------------------------
+
+func remoteQueryLCA(host string, port int, queries []string) {
+	msg := taxon.RemoteQueryLCA(host, port, queries)
+	if msg.Status != "OK" {
+		log.Error(msg.Message)
+	}
+
+	for query, taxon := range msg.LCA {
+		fmt.Printf("Query TaxIDs: %s\n", query)
+		bs, err := json.MarshalIndent(taxon, "", "  ")
+		checkError(err)
+		fmt.Printf("Taxon: %s\n\n", string(bs))
+	}
+}
+
+func remoteQueryLCAByFile(host string, port int, dataFile string, chunkSize int, threads int) {
+	if chunkSize <= 0 {
+		chunkSize = 1000
+	}
+	fn := func(line string) (interface{}, bool, error) {
+		line = strings.TrimRight(line, "\n")
+		if line == "" {
+			return "", false, nil
+		}
+		return line, true, nil
+	}
+	reader, err := breader.NewBufferedReader(dataFile, threads, chunkSize, fn)
+	checkError(err)
+
+	chResults := make(chan taxon.MessageLCAMap, threads)
+
+	// receive result and print
+	chDone := make(chan int)
+	go func() {
+		for msg := range chResults {
+			if msg.Status != "OK" {
+				log.Error(msg.Message)
+			}
+			for query, taxon := range msg.LCA {
+				fmt.Printf("Query TaxIDs: %s\n", query)
+				bs, err := json.MarshalIndent(taxon, "", "  ")
+				checkError(err)
+				fmt.Printf("Taxon: %s\n\n", string(bs))
+			}
+		}
+		chDone <- 1
+	}()
+
+	// querying
+	var wg sync.WaitGroup
+	tokens := make(chan int, threads)
+	for chunk := range reader.Ch {
+		tokens <- 1
+		wg.Add(1)
+
+		queries := make([]string, len(chunk.Data))
+		for i, data := range chunk.Data {
+			queries[i] = data.(string)
+		}
+
+		go func(queries []string) {
+			defer func() {
+				wg.Done()
+				<-tokens
+			}()
+
+			msg := taxon.RemoteQueryLCA(host, port, queries)
+			checkError(err)
+			chResults <- msg
+		}(queries)
+	}
+	wg.Wait()
+	close(chResults)
+	<-chDone
+}
+
+// --------------------------------------------------------------------------
+
+func remoteQueryTaxid2Taxon(host string, port int, taxids []string) {
+	msg := taxon.RemoteQueryTaxid2Taxon(host, port, taxids)
+	if msg.Status != "OK" {
+		log.Error(msg.Message)
+	}
+
+	for taxid, taxon := range msg.Taxons {
+		fmt.Printf("Query TaxIDs: %s\n", taxid)
+		bs, err := json.MarshalIndent(taxon, "", "  ")
+		checkError(err)
+		fmt.Printf("Taxon: %s\n\n", string(bs))
+	}
+}
+
+func remoteQueryTaxid2TaxonByFile(host string, port int, dataFile string, chunkSize int, threads int) {
+	if chunkSize <= 0 {
+		chunkSize = 1000
+	}
+	fn := func(line string) (interface{}, bool, error) {
+		line = strings.TrimRight(line, "\n")
+		if line == "" {
+			return "", false, nil
+		}
+		return line, true, nil
+	}
+	reader, err := breader.NewBufferedReader(dataFile, threads, chunkSize, fn)
+	checkError(err)
+
+	chResults := make(chan taxon.MessageTaxid2TaxonMap, threads)
+
+	// receive result and print
+	chDone := make(chan int)
+	go func() {
+		for msg := range chResults {
+			if msg.Status != "OK" {
+				log.Error(msg.Message)
+			}
+			for taxid, taxon := range msg.Taxons {
+				fmt.Printf("Query TaxIDs: %s\n", taxid)
+				bs, err := json.MarshalIndent(taxon, "", "  ")
+				checkError(err)
+				fmt.Printf("Taxon: %s\n\n", string(bs))
+			}
+		}
+		chDone <- 1
+	}()
+
+	// querying
+	var wg sync.WaitGroup
+	tokens := make(chan int, threads)
+	for chunk := range reader.Ch {
+		tokens <- 1
+		wg.Add(1)
+
+		queries := make([]string, len(chunk.Data))
+		for i, data := range chunk.Data {
+			queries[i] = data.(string)
+		}
+
+		go func(queries []string) {
+			defer func() {
+				wg.Done()
+				<-tokens
+			}()
+
+			msg := taxon.RemoteQueryTaxid2Taxon(host, port, queries)
+			checkError(err)
+			chResults <- msg
+		}(queries)
+	}
+	wg.Wait()
+	close(chResults)
+	<-chDone
+}
+
+// --------------------------------------------------------------------------
+
+func remoteName2TaxID(host string, port int, useRegexp bool, nameClass string, names []string) {
+	msg := taxon.RemoteQueryName2TaxID(host, port, useRegexp, nameClass, names)
+	if msg.Status != "OK" {
+		log.Error(msg.Message)
+	}
+
+	for name, items := range msg.TaxIDs {
+		idnames := make([]string, len(items))
+		for i, item := range items {
+			idnames[i] = fmt.Sprintf("%d(%s)", item.TaxID, item.ScientificName)
+		}
+		fmt.Printf("%s\t%s\n", name, strings.Join(idnames, ","))
+	}
+}
+
+func remoteName2TaxIDByFile(host string, port int, useRegexp bool, nameClass string, dataFile string, chunkSize int, threads int) {
+	if chunkSize <= 0 {
+		chunkSize = 1000
+	}
+	fn := func(line string) (interface{}, bool, error) {
+		line = strings.TrimRight(line, "\n")
+		if line == "" {
+			return "", false, nil
+		}
+		return line, true, nil
+	}
+	reader, err := breader.NewBufferedReader(dataFile, threads, chunkSize, fn)
+	checkError(err)
+
+	chResults := make(chan taxon.MssageName2TaxIDMap, threads)
+
+	// receive result and print
+	chDone := make(chan int)
+	go func() {
+		for msg := range chResults {
+			if msg.Status != "OK" {
+				log.Error(msg.Message)
+			}
+			for name, items := range msg.TaxIDs {
+				idnames := make([]string, len(items))
+				for i, item := range items {
+					idnames[i] = fmt.Sprintf("%d(%s)", item.TaxID, item.ScientificName)
+				}
+				fmt.Printf("%s\t%s\n", name, strings.Join(idnames, ","))
+			}
+		}
+		chDone <- 1
+	}()
+
+	// querying
+	var wg sync.WaitGroup
+	tokens := make(chan int, threads)
+	for chunk := range reader.Ch {
+		tokens <- 1
+		wg.Add(1)
+
+		queries := make([]string, len(chunk.Data))
+		for i, data := range chunk.Data {
+			queries[i] = data.(string)
+		}
+
+		go func(queries []string) {
+			defer func() {
+				wg.Done()
+				<-tokens
+			}()
+
+			msg := taxon.RemoteQueryName2TaxID(host, port, useRegexp, nameClass, queries)
+			checkError(err)
+			chResults <- msg
+		}(queries)
+	}
+	wg.Wait()
+	close(chResults)
+	<-chDone
+}
+
+// --------------------------------------------------------------------------
+
 func remoteQueryGi2Taxid(host string, port int, dataType string, gis []string) {
-	taxids := taxon.RemoteQueryGi2Taxid(host, port, dataType, gis)
-	for i, gi := range gis {
-		fmt.Printf("%s\t%s\n", gi, taxids[i])
+	msg := taxon.RemoteQueryGi2Taxid(host, port, dataType, gis)
+	if msg.Status != "OK" {
+		log.Error(msg.Message)
+	}
+	for gi, taxid := range msg.Taxids {
+		fmt.Printf("%s\t%s\n", gi, taxid)
 	}
 }
 
@@ -111,18 +392,20 @@ func remoteQueryGi2TaxidByFile(host string, port int, dataType string, dataFile 
 		}
 		return line, true, nil
 	}
-	reader, err := breader.NewBufferedReader(dataFile, runtime.NumCPU(), chunkSize, fn)
+	reader, err := breader.NewBufferedReader(dataFile, threads, chunkSize, fn)
 	checkError(err)
 
-	chResults := make(chan [][]string, threads)
+	chResults := make(chan taxon.MessageGI2TaxidMap, threads)
 
 	// receive result and print
 	chDone := make(chan int)
 	go func() {
-		for s := range chResults {
-			gis, taxids := s[0], s[1]
-			for i, gi := range gis {
-				fmt.Printf("%s\t%s\n", gi, taxids[i])
+		for msg := range chResults {
+			if msg.Status != "OK" {
+				log.Error(msg.Message)
+			}
+			for gi, taxid := range msg.Taxids {
+				fmt.Printf("%s\t%s\n", gi, taxid)
 			}
 		}
 		chDone <- 1
@@ -146,9 +429,9 @@ func remoteQueryGi2TaxidByFile(host string, port int, dataType string, dataFile 
 				<-tokens
 			}()
 
-			taxids := taxon.RemoteQueryGi2Taxid(host, port, dataType, gis)
+			msg := taxon.RemoteQueryGi2Taxid(host, port, dataType, gis)
 			checkError(err)
-			chResults <- [][]string{gis, taxids}
+			chResults <- msg
 		}(gis)
 	}
 	wg.Wait()
@@ -161,7 +444,9 @@ func init() {
 
 	remoteCmd.Flags().StringP("host", "H", "127.0.0.1", "server host")
 	remoteCmd.Flags().IntP("port", "P", 8080, "port number")
-	remoteCmd.Flags().StringP("type", "t", "", "data type. Valid: gi_taxid_prot or gi_taxid_nucl")
+	remoteCmd.Flags().StringP("type", "t", "", `query type. type "gataxon cli remote -h" for help`)
 	remoteCmd.Flags().StringP("file", "f", "", "read queries from file")
-	remoteCmd.Flags().IntP("chunk-size", "b", 10000, "chunk size of querying (should not be too small or too large, do not change this)")
+	remoteCmd.Flags().IntP("chunk-size", "c", 10000, "chunk size of querying (should not be too small or too large, do not change this)")
+	remoteCmd.Flags().BoolP("use-regexp", "R", false, `use regexp (only for query type "name2taxid")`)
+	remoteCmd.Flags().StringP("name-class", "C", "", `name class (only for query type "name2taxid")`)
 }

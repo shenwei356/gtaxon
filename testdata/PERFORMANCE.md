@@ -1,5 +1,7 @@
 ## Performance
 
+### gi2taxid
+
 - Platform: Fedora Linux (4.3.5-300.fc23.x86_64), RAM 12G, SSD
 
 - Dataset:
