@@ -26,7 +26,7 @@ import (
 
 	"github.com/boltdb/bolt"
 	"github.com/mitchellh/go-homedir"
-	pathutil "github.com/shenwei356/util/path"
+	"github.com/shenwei356/util/pathutil"
 )
 
 // DbPath is the database path

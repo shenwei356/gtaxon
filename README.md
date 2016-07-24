@@ -27,7 +27,7 @@ Windows, \*BSD ) are available.
 See [Release](https://github.com/shenwei356/gtaxon/releases) page.
 - Supporting querying from **both LOCAL and REMOTE server** by REST API,
  which is also easily called by various clients of other languages.
- gTaxon have command-line client `gtaxon cli local` for local query and
+ gTaxon has command-line client `gtaxon cli local` for local query and
  `gtaxon cli remote` for remote query.
 - **Fast**. See Section Performance.
 
@@ -362,7 +362,7 @@ See https://github.com/ogier/pflag
         http://localhost:8080/lca?taxids=9606,63221&taxids=1,2
 
 
-You can write client in your favorite programming language.
+You can also write client in your favorite programming language.
 
 ## Implement details
 
